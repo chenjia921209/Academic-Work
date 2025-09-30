@@ -1,20 +1,20 @@
 package edu.uwm.cs351.util;
 
 /**
- * A map entry that satisfies all the requirements of an entry,
- * and is mutable.
- * @param K key type
- * @param V value type
+ * A default implementation of entries in a Map
+ * @see {@link java.util.Map.Entry}
  */
-public class DefaultEntry<K, V> extends AbstractEntry<K,V> {
+public class DefaultEntry<K,V> extends AbstractEntry<K, V> {
 
-	private final K key;
-	private V value;
+	protected K key;
+	protected V value;
 	
-	public DefaultEntry(K k, V v) {
-		key = k;
-		value = v;
-	}
+	/**
+	 * Create an entry with the given arguments.
+	 * @param k
+	 * @param v
+	 */
+	public DefaultEntry(K k, V v) { key = k; value = v; }
 	
 	@Override
 	public K getKey() {
@@ -26,11 +26,9 @@ public class DefaultEntry<K, V> extends AbstractEntry<K,V> {
 		return value;
 	}
 
-	@Override
 	public V setValue(V v) {
-		V result = value;
+		V old = value;
 		value = v;
-		return result;
+		return old;
 	}
-
 }

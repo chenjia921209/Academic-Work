@@ -2,39 +2,30 @@ package edu.uwm.cs351.util;
 
 import java.util.Map;
 
-/**
- * An entry in a Map
- * @see {@link java.util.Map.Entry}
- */
-public abstract class AbstractEntry<K,V> implements Map.Entry<K,V> {
-
-	abstract public K getKey();
-
-	abstract public V getValue();
-
-	public V setValue(V v) {
-		throw new UnsupportedOperationException("setValue");
-	}
-	
+public abstract class AbstractEntry<K, V> implements Map.Entry<K,V> {
+	@Override
 	public boolean equals(Object o) {
 		if (!(o instanceof Map.Entry))
 			return false;
 		Map.Entry<?,?> e = (Map.Entry<?,?>)o;
-		return eq(getKey(), e.getKey()) && eq(getValue(), e.getValue());
+		return eq(this.getKey(), e.getKey()) && eq(this.getValue(), e.getValue());
 	}
 
+	@Override
 	public int hashCode() {
-		K key = getKey();
-		V value = getValue();
-		return ((key   == null) ? 0 :   key.hashCode()) ^
-		       ((value == null) ? 0 : value.hashCode());
+		return hash(getKey()) ^ hash(getValue());
 	}
 
+	@Override
 	public String toString() {
-		return getKey() + "=" + getValue();
+		return this.getKey() + "=" + this.getValue();
 	}
 
-	private static boolean eq(Object o1, Object o2) {
+	protected static int hash(Object o) {
+		return o == null ? 0 : o.hashCode();
+	}
+	
+	protected static boolean eq(Object o1, Object o2) {
 		return (o1 == null ? o2 == null : o1.equals(o2));
 	}
 }
