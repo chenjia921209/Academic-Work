@@ -3,8 +3,6 @@ package edu.uwm.cs351;
 import java.awt.Point;
 import java.awt.Polygon;
 
-import javax.print.attribute.standard.MediaSize.Other;
-
 /**
  * Coordinates on a hexagon-filled game board.
  * <dl>
@@ -23,11 +21,13 @@ public class HexCoordinate {
 	 * @param a first coordinate
 	 * @param b second coordinate
 	 */
-	public HexCoordinate(int a, int b) { //定義c怎麼來的
+	public HexCoordinate(int a, int b) {
+		// #(
+		this.a = a;
+		this.b = b;
+		this.c = a - b;
+		// #)
 		// TODO: Very easy. See handout.
-		this.a=a; //因為要指定這個a = a所以要用this
-		this.b=b;
-		this.c=a-b;
 	}
 	
 	/**
@@ -38,15 +38,14 @@ public class HexCoordinate {
 	 * @param c
 	 * @exception IllegalArgumentException if the coordinates are not consistent.
 	 */
-	public HexCoordinate(int a, int b, int c) throws IllegalArgumentException {//要檢查abc是否符合規則 a+b+c=0
-		// TODO: Check consistency and then assign fields.
-		if(a-b != c) {
-			throw new IllegalArgumentException("Invalid coordinates: a + b + c must equal to 0.");
-		}
+	public HexCoordinate(int a, int b, int c) throws IllegalArgumentException {
+		// #(
+		if (a - b != c) throw new IllegalArgumentException("c coordindate must be the difference of a and b: " + c + " != " + a + " + " + b);
 		this.a = a;
-	    this.b = b;
-	    this.c = c;
-
+		this.b = b;
+		this.c = c;
+		// #)
+		// TODO: Check consistency and then assign fields.
 	}
 	
 	/// three simple accessors
@@ -70,36 +69,37 @@ public class HexCoordinate {
 	 */
 	public int c() { return c; }
 	
+	
+	/// Overrides
+	// no need to give a documentation comment if overridden documentation still is valid.
+	// return true iff x is another HexCoordinate with the same value
 	@Override
-	public String toString() {
-		return ("<"+a +"," +b + "," +c +">");
+	public boolean equals(Object x) {
+		// #(
+		if (x instanceof HexCoordinate) {
+			HexCoordinate other = (HexCoordinate)x;
+			if (other.a == a && other.b == b) return true;
+		}
+		return false;
+		// #)
+		// TODO
 	}
-	@Override
-	public boolean equals(Object obj) {
-		if(!(obj instanceof HexCoordinate)){ //如果他不屬於hexcoordinate
-			return false;
-		}
-			HexCoordinate obj1 = (HexCoordinate) obj; //因為他不屬於coordinate所以需要創建一個新的obj1來儲存 (HexCoordiate)是用來表示他的型態
-			return this.a == obj1.a &&  this.b == obj1.b &&  this.c == obj1.c ;
-			
-		}
-
+	
 	@Override
 	public int hashCode() {
-		int resulta = a;
-		int resultb = 7* resulta +b;
-		int resultc = 7* resultb +c;
-		return resultc;
+		return a ^ (b << 8);
+		//return some combination of a, b and c that distinguishes similar coordinates
+	}
+	
+	
+	@Override
+	public String toString() {
+		// #(
+		return "<"+a+","+b+","+c+">";
+		// #)
+		// TODO: return a string of the form <3,2,1>
 	}
 
-
-	/// Overrides (make sure to declare @Override)
-	// (No documentation comment is necessary,
-	// but the reason for the override must be given.  Usually "implementation".)
-	// no need to give a documentation comment if overridden documentation still is valid.
-	// TODO: Override methods from Object that need new implementations
-	
-	
 	/**
 	 * Return the closest hex coordinate to this point.
 	 * If two are equally close, either may be returned.
@@ -125,9 +125,6 @@ public class HexCoordinate {
 
 	/// Other accessors
 	
-
-
-
 	//define HEIGHT_RATIO is the ration of height to width
 	public static final float HEIGHT_RATIO = (float) (Math.sqrt(3.0)/2.0); // height of a row, given width = 1.0
 	private static final float THIRD = 1.0f/3.0f;
@@ -139,7 +136,10 @@ public class HexCoordinate {
 	 * @return Point in the center of the hexagon
 	 */
 	public Point toPoint(int width) {
+		// #(
 		return toPoint(width, a, b);
+		// #)
+		// TODO: call the other toPoint method with the correct coordinates
 	}
 	
 	/**
@@ -151,22 +151,14 @@ public class HexCoordinate {
 	 * @return [x,y] point for this location.
 	 */
 	private static Point toPoint(int width, float a, float b) {
-		// TODO convert two two-dimensional coordinates with rounded values
-		// Hint: Our code computes the height: the vertical skip between lines of hexagons
-		// using the width and the height ratio.  
-		// Then it uses the width and the height together with a and b to compute x and y coordinates.
-		// Each unit of "a" moves the coordinate over by the width, and each unit of "b" down by the height.
-		// But each unit of "b" also moves the coordinate *back* by half the width.
-		double height = width * HEIGHT_RATIO;
-		double x = width*(a-b/2);
-		double y = height*b;
-		
-		int xCoordinate = (int) Math.round(x);
-		int yCoordinate = (int) Math.round(y);
-		//Point point = new Point(xCoordinate,yCoordinate);
-		
-		return new Point(xCoordinate,yCoordinate);
+		float height;
+		// #(
+		height = width * HEIGHT_RATIO;
+		// #)
+		// TODO: compute the height using the width and the height ratio
+		return new Point(Math.round(width*(a-b/2.0f)),Math.round(height*b));
 	}
+	
 	
 	/**
 	 * Create a polygon (for rendering in AWT) for the hexagon around this
@@ -175,34 +167,23 @@ public class HexCoordinate {
 	 * @return polygon for hexagon
 	 */
 	public Polygon toPolygon(int width) {
+		Point[] ps = {
+				toPoint(width,a-THIRD,b-TWOTHIRD),
+				toPoint(width,a+THIRD,b-THIRD),
+				toPoint(width,a+TWOTHIRD,b+THIRD),
+				toPoint(width,a+THIRD,b+TWOTHIRD),
+				toPoint(width,a-THIRD,b+THIRD),
+				toPoint(width,a-TWOTHIRD,b-THIRD)
+		};
 		Polygon result = new Polygon();
-		//THIRD = 1.0/3.0;
-		//TWOTHIRD =2.0/3.0;
-	
-		Point p1 = new Point(toPoint(width,a-THIRD,b-TWOTHIRD));
-		Point p2 = new Point(toPoint(width,a+THIRD,b-THIRD));
-		Point p3 = new Point(toPoint(width,a+TWOTHIRD,b+THIRD));
-		Point p4 = new Point(toPoint(width,a+THIRD,b+TWOTHIRD));
-		Point p5 = new Point(toPoint(width,a-THIRD,b+THIRD));
-		Point p6 = new Point(toPoint(width,a-TWOTHIRD,b-THIRD));
-	
-		result.addPoint(p1.x,p1.y);
-		result.addPoint(p2.x,p2.y);
-		result.addPoint(p3.x,p3.y);
-		result.addPoint(p4.x,p4.y);
-		result.addPoint(p5.x,p5.y);
-		result.addPoint(p6.x,p6.y);
-		
-		// TODO: Add points for each of the six vertices of the hexagon.
-		// Compute the a,b hex coordinates of each of the six points of the
-		// hexagon around the center (which is at <a,b,c>).
-		// Then for each one, use the private toPoint method to
-		// create a point which can then be added to the polygon.
-		// For example, the top vertex is at <a-1/3,b-2/3,c+1/3>
-		// Use the THIRD and TWOTHIRD constants.
+		// #(
+		for (Point p : ps) {
+			result.addPoint(p.x,p.y);
+		}
+		// #)
+		//TODO: add the points in ps to this Polygon
+		// you may want to look up Oracle's page on Polygon
 		return result;
-		// You may want to look up Oracle's documentation on Polygon,
-		// especially its addPoint method.
 	}
 	
 	/**
@@ -214,17 +195,44 @@ public class HexCoordinate {
 	 * @param other
 	 * @return number of steps from one hex to another
 	 */
-	 public int distance(HexCoordinate other) {
-		int xDistance = Math.abs(a-other.a);
-		int yDistance = Math.abs(b-other.b);
-		int zDistance = Math.abs(c-other.c);
-		int minPath = (int) Math.max(Math.max(xDistance, yDistance),zDistance);
-		
-		return minPath;
-		// TODO: return the distance between this hexagon and the other.
-		// See the handout for details.
-		// You can use Math.max(x, y) and Math.abs(x)
-
-		}
+	public int distance(HexCoordinate other) {
+		// #(
+		int da = Math.abs(a - other.a);
+		int db = Math.abs(b - other.b);
+		int dc = Math.abs(c - other.c);
+		int maxd = Math.max(da, Math.max(db,dc));
+		return maxd; // return da + db + dc - maxd;
+		// #)
+		// TODO: return the distance between this hexagon and the other
+		//		 see the handout for details
+		//       you can use Math.max(x, y) and Math.abs(x)
 	}
+	
+    /**
+     * Return HexCoordinate whose string is the given string.
+     * @param s hex coordinate string of form <a,b,c>.  Must not be null
+     * @return hex coordinate whose string is this method's parameter.
+     * @throws FormatException if the strong format is bad.
+     */
+    public static HexCoordinate fromString(String s) throws FormatException {
+            if (!s.startsWith("<") || !s.endsWith(">")) {
+                    throw new FormatException("Not in format <a,b,c>: '" + s + "'");
+            }
+            String[] pieces = s.substring(1, s.length()-1).split(",");
+            if (pieces.length != 3) {
+                    throw new FormatException("Not in format <a,b,c>: '" + s + "'");
+            }
+            int a, b, c;
+            try {
+                    a = Integer.parseInt(pieces[0]);
+                    b = Integer.parseInt(pieces[1]);
+                    c = Integer.parseInt(pieces[2]);
+            } catch (NumberFormatException ex) {
+                    throw new FormatException(ex);
+            }
+            return new HexCoordinate(a,b,c);
+    }
 
+	
+
+}
