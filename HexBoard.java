@@ -1,11 +1,17 @@
 package edu.uwm.cs351;
 
-import java.util.AbstractCollection;
+import java.util.AbstractMap;
+import java.util.AbstractSet;
 import java.util.ConcurrentModificationException;
 import java.util.Iterator;
+import java.util.Map;
+import java.util.Map.Entry;
 import java.util.NoSuchElementException;
+import java.util.Set;
 import java.util.Stack;
 import java.util.function.Consumer;
+
+import edu.uwm.cs351.util.AbstractEntry;
 
 /**
  * An implementation of the HexBoard ADT using 
@@ -13,7 +19,7 @@ import java.util.function.Consumer;
  * A hex board is a collection of hex tiles except that there can 
  * never be two tiles at the same location. 
  */
-public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
+public class HexBoard extends AbstractSet<HexTile> implements Cloneable {
 
 	private static int compare(HexCoordinate h1, HexCoordinate h2) {
 		if (h1.b() == h2.b()) {
@@ -22,11 +28,29 @@ public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
 		return h1.b() - h2.b();
 	}
 
-	private static class Node {
+	private static class Node extends AbstractEntry<HexCoordinate, Terrain>
+	{
 		HexCoordinate loc;
 		Terrain terrain;
 		Node left, right;
 		Node(HexCoordinate l, Terrain t) { loc = l; terrain = t; }
+		@Override
+		public HexCoordinate getKey() {
+			return loc;
+		}
+		@Override
+		public Terrain getValue() {
+			return terrain;
+		}
+		@Override
+		public Terrain setValue(Terrain value) {
+			if (value == null) {
+				throw new NullPointerException();
+			}
+			Terrain old = terrain;
+			terrain = value;
+			return old;
+		}
 	}
 
 	private Node root;
@@ -88,26 +112,26 @@ public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
 	 * @param c hex coordinate to look for (null OK but pointless)
 	 * @return terrain at that coordinate, or null if nothing
 	 */
-	public Terrain terrainAt(HexCoordinate l) {
+	public Terrain terrainAt(HexCoordinate c) {
 		assert wellFormed() : "in terrainAt";
+		if (c == null) return null;
 		for (Node p = root; p != null; ) {
-			int c = compare(l,p.loc);
-			if (c == 0) return p.terrain;
-			if (c < 0) p = p.left;
+			int cmp = compare(c,p.loc);
+			if (cmp == 0) return p.terrain;
+			if (cmp < 0) p = p.left;
 			else p = p.right;
 		}
 		return null;
 	}
 
-	@Override // required
+	@Override // required by Java
 	public Iterator<HexTile> iterator() {
 		assert wellFormed() : "in iterator";
 		return new MyIterator();
 	}
-
-	@Override // required
+	@Override // required by Java
 	public int size() {
-		assert wellFormed() : "in size";
+		assert wellFormed() : "in size";	
 		return size;
 	}
 
@@ -152,270 +176,449 @@ public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
 
 	@Override // efficiency
 	public void clear() {
+		assert wellFormed() : "invariant broken before clear()";
 		if (size > 0) {
 			root = null;
 			size = 0;
 			++version;
 		}
+		assert wellFormed() : "invariant broken by clear()";
 	}
 
-	// TODO: method(s) for remove.
-	public boolean remove(Object o) {
-		assert wellFormed() : "before remove()";
+	private Node doRemove(Node r, HexTile ht) {
+		int c = compare(ht.getLocation(),r.loc);
+		if (c == 0) {
+			if (r.left == null) return r.right;
+			if (r.right == null) return r.left;
+			Node sub = r.left;
+			while (sub.right != null) {
+				sub = sub.right;
+			}
+			r.loc = sub.loc;
+			r.terrain = sub.terrain;
+			r.left = doRemove(r.left, new HexTile(r.terrain,r.loc));
+		} else if (c < 0) {
+			r.left = doRemove(r.left, ht);
+		} else {
+			r.right = doRemove(r.right, ht);
+		}
+		return r;
+	}
 
-		if(!(o instanceof HexTile)) return false;
+	@Override // for efficiency and because the iterator uses this, for implementation
+	public boolean remove(Object x) {
+		assert wellFormed() : "invariant broken before remove()";
+		if (!(x instanceof HexTile)) return false;
+		HexTile ht = (HexTile)x;
+		if (!contains(ht)) return false;
+		root = doRemove(root,ht);
+		--size;
+		++version;
+		assert wellFormed() : "invariant broken after remove";
+		return true;
+	}
 
-		HexTile hexTile = (HexTile) o;
-		Terrain t =terrainAt(hexTile.getLocation());
-		if(t==null || !t.equals(hexTile.getTerrain())) {
+	private Node doClone(Node r) {
+		if (r == null) return null;
+		Node c = new Node(r.loc, r.terrain);
+		c.left = doClone(r.left);
+		c.right = doClone(r.right);
+		return c;
+	}
+
+	@Override // decorate
+	public HexBoard clone() {
+		assert wellFormed() : "invariant failed at start of clone";
+		HexBoard result;
+
+		try
+		{
+			result = (HexBoard) super.clone( );
+		}
+		catch (CloneNotSupportedException e)
+		{  // This exception should not occur. But if it does, it would probably
+			// indicate a programming error that made super.clone unavailable.
+			// The most common error would be forgetting the "Implements Cloneable"
+			// clause at the start of this class.
+			throw new RuntimeException
+			("This class does not implement Cloneable");
+		}
+
+		result.root = doClone(root);
+		assert wellFormed() : "invariant failed at end of clone";
+		assert result.wellFormed() : "invariant failed for clone";
+
+		return result;
+	}
+
+	
+	
+	private class MyIterator implements Iterator<HexTile>{
+
+		private EntrySetIterator entryIt ;
+		private boolean hasRow;
+		private int row;
+
+		public MyIterator(int row) {
+			entryIt = new EntrySetIterator(row);
+			this.row = row;
+			this.hasRow=true;
+		}
+
+		public MyIterator() {
+			entryIt = new EntrySetIterator();
+			this.hasRow = false;
+		}
+
+		@Override
+		public boolean hasNext() {
+			if(!hasRow) {
+				return entryIt.hasNext();
+			}else {
+				return entryIt.hasNext(row);
+			}
+		}
+
+		@Override
+		public HexTile next() {
+			if(!hasNext()) {
+				throw new NoSuchElementException("No element in this row");
+			}
+			Entry<HexCoordinate, Terrain> entry = entryIt.next();
+			HexTile hexTile = new HexTile(entry.getValue(), entry.getKey());
+			return hexTile;
+		}
+
+		@Override
+		public void remove() {
+			entryIt.remove();
+		}
+
+	}
+	
+
+	/**
+	 * Return a set backed by this hex board that
+	 * has all the tiles in the given row.
+	 * The result is <i>backed</i> by this hex board;
+	 * changes to either are reflected in the other.
+	 * @param r row number.
+	 * @return set of hextiles with the given row
+	 */
+
+	public Set<HexTile> row(int r) {
+		assert wellFormed():"at the begin of row";
+		return new Row(r); // TODO
+	}
+
+	/**
+	 * Return a view of this hex board as a map from hex coordinates to terrain.
+	 * It is as efficient as the hex board itself.
+	 * @return
+	 */
+	public Map<HexCoordinate,Terrain> asMap() {
+		return new MyMap(); 
+	}
+
+
+
+	// TODO: add nested classes to implement map, entry set, and row.
+	private class Row extends AbstractSet<HexTile> {
+		private final int row;
+
+		private Row(int row) {
+			this.row = row;
+		}
+
+		@Override
+		public boolean add(HexTile h) {
+			assert wellFormed():"at the beginning of add";
+			// row 不對，不能加
+			if (h.getLocation().b() != row) throw new IllegalArgumentException("HexTile is not belong to row" + row);
+			if (h == null || h.getLocation().b() != row) throw new NullPointerException("h is null");
+			return HexBoard.this.add(h); // 加到整個 HexBoard 裡
+		}
+
+		@Override
+		public Iterator<HexTile> iterator() {
+			assert wellFormed():"at the beginning of iterator()";
+			return new MyIterator(row);
+		}
+
+		@Override
+		public int size() {
+			assert wellFormed():"at the beginning of size";
+			int count = 0;
+			Iterator<HexTile> it =iterator();
+			while(it.hasNext()) {
+				it.next();
+				count++;
+			}
+			assert wellFormed():"at the end of the size";
+			return count;
+		}
+
+		@Override //efficiency
+		public boolean contains(Object o) { //檢查一個物件 o 是否在某個集合裡面
+			if (!(o instanceof HexTile)) return false; 
+				HexTile h = (HexTile) o; //強制轉型為 HexTile
+				if(h.getLocation().b() == row) {
+				return HexBoard.this.contains(h);
+				}
 			return false;
 		}
-		root = removeNode(root,hexTile.getLocation());
-		size--;
-		// 更新版本號
-		++version;
 
-		assert wellFormed() : "after remove()";
-		return true;  // 成功移除
-	}
-	private Node removeNode(Node p, HexCoordinate loc) {
-		if (p == null) return null; 
-
-		int c = compare(loc, p.loc);  // 比較 loc 與當前節點位置
-
-		if (c < 0) {
-			p.left = removeNode(p.left, loc);
-		} else if (c > 0) {
-			p.right = removeNode(p.right, loc);
-		} else {
-			//if left=null,then return right
-			if (p.left == null) return p.right;
-			if (p.right == null) return p.left;
-			//if both have left and right
-			Node n= p.right;
-			while(n.left!=null) {
-				n=n.left;
+		@Override //efficiency
+		public boolean remove(Object o) {
+			if (o instanceof HexTile) {
+				HexTile h = (HexTile) o;
+				if (h.getLocation().b() == row) return HexBoard.this.remove(h);
 			}
-			p.loc = n.loc;
-			p.terrain = n.terrain;
-			// 移除右子樹中的最小節點
-			p.right = removeNode(p.right, n.loc);
+			return false;
 		}
-		return p;
-	}
-
-	// TODO: Method(s) for clone.
-	@Override
-	public HexBoard clone() {
-		try {
-			HexBoard copy = (HexBoard) super.clone(); //super.clone() 進行淺複製
-			copy.root = copyTree(this.root);
-			copy.version = 0;
-			assert copy.wellFormed();
-			return copy;
-		} catch (CloneNotSupportedException e) {
-			throw new AssertionError("clone not supported");
+		
+		@Override
+		public boolean isEmpty() {
+			assert wellFormed() : "in isEmpty() of EntrySet";
+		    return !iterator().hasNext();
 		}
 	}
 
-	private Node copyTree(Node p) {
-		if (p == null) return null;
-		Node n = new Node(p.loc, p.terrain); // // 創建一個新的 Node，並遞歸複製左右子樹
-		n.left = copyTree(p.left);
-		n.right = copyTree(p.right);
-		return n;
+
+	// The map and entry set classes must not have any fields!
+	// The row class may only have a "final" field (for the row number).
+	// Assuming you can use a separate constructor for MyIterator,
+	// this class can be used for row iterators too.
+
+	// 巢狀在 HexBoard 裡
+	private class EntrySet extends AbstractSet<Map.Entry<HexCoordinate, Terrain>> {
+
+		@Override 
+		public Iterator<Map.Entry<HexCoordinate, Terrain>> iterator() {
+			assert wellFormed():("in iterator() of EntrySet");
+			return new EntrySetIterator();
+		}
+
+		@Override 
+		public int size() {
+			assert wellFormed():("in size of EntrySet");
+			return HexBoard.this.size;
+		}
+		@Override //efficiency
+		public boolean contains(Object o) {
+			if(!(o instanceof Map.Entry)) return false;
+			Map.Entry<?,?> e = (Map.Entry<?,?>) o;
+			if(!(e.getKey() instanceof HexCoordinate) || !(e.getValue()
+					instanceof Terrain)) return false; //檢查 key 是不是 HexCoordinate，value 是不是 Terrain
+			HexCoordinate key = (HexCoordinate) e.getKey();
+			Terrain actual = terrainAt(key);
+			return actual != null && actual.equals(e.getValue()); //compare value
+		}
+		@Override //efficiency
+		public boolean remove(Object o) {
+			if(!(o instanceof Map.Entry)) return false;
+			Map.Entry<?,?> e = (Map.Entry<?,?>) o;
+			if(!(e.getKey() instanceof HexCoordinate) || !(e.getValue()
+					instanceof Terrain)) return false;
+			HexCoordinate key = (HexCoordinate) e.getKey();
+			Terrain t = (Terrain)e.getValue();
+			return HexBoard.this.remove(new HexTile(t, key));
+		}
+
+	}
+	private class MyMap extends AbstractMap<HexCoordinate, Terrain> {
+
+		@Override
+		public Set<Map.Entry<HexCoordinate, Terrain>> entrySet() {
+			return new EntrySet();
+		}
+
+		@Override
+		public Terrain put(HexCoordinate key, Terrain value) {
+			assert wellFormed() : "invariant brfore put()";
+			if (key == null || value == null) throw new NullPointerException();
+			Terrain addOne = get(key);
+			add(new HexTile(value, key));
+			assert wellFormed() : "invariant after put()";
+			return addOne;
+		}
+		@Override //efficiency
+		public Terrain get(Object key) {
+			assert wellFormed() : "at the beginning get() of MyMap";
+			if (!(key instanceof HexCoordinate)) return null;
+			return terrainAt((HexCoordinate) key);
+		}
+		@Override //efficiency
+		public boolean containsKey(Object key) {
+			assert wellFormed() : "at the beginning containsKey() of map";
+			if (!(key instanceof HexCoordinate)) return false;
+			return terrainAt((HexCoordinate) key) != null;
+		}
+		@Override //efficiency
+		public Terrain remove(Object key) {
+			assert wellFormed() : "at the beginning of MyMap";
+			if (!(key instanceof HexCoordinate)) return null;
+			HexCoordinate k = (HexCoordinate) key;
+			Terrain t = terrainAt(k);
+			if(t!= null)
+				HexBoard.this.remove(new HexTile(t, k));
+			return t;
+		}
 	}
 
+	private class EntrySetIterator implements Iterator<Entry<HexCoordinate,Terrain>> {
+		// Separate this into two classes:
+		// One an entry set iterator, and the other a wrapper
 
-
-	private class MyIterator implements Iterator<HexTile> {
-		// new data structure for iterator:
+		// around it that returns hex tiles up to a particular row number.
 		private Stack<Node> pending = new Stack<>();
 		private HexTile current; // if can be removed
 		private int myVersion = version;
+		private int rowFilter = 0; // -1 means no row filtering
 
 		private boolean wellFormed() {
-			// TODO:
-			// 1. Check the outer invariant (see new syntax in homework description)
 			if (!HexBoard.this.wellFormed()) return false;
-			// 2. If we are stale, don't check anything else, pretend no problems
-			if (myVersion != version) return true;
-			// 3. If current isn't null, there should be a node for it in the tree.
-			if (current != null) {
-				Terrain found = terrainAt(current.getLocation());
-				if(found == null || !found.equals(current.getTerrain())) {
-					return report("Node is not in the tree");
+			if (version == myVersion) {
+				if (pending == null) return report("null pending");
+				@SuppressWarnings("unchecked")
+				Stack<Node> clone = (Stack<Node>) pending.clone();
+				Node p = null;
+				if (current != null) {
+					boolean found = false;
+					for (Node r=root; r != null; ) {
+						if (compare(current.getLocation(),r.loc) < 0) {
+							p = r; // remember GT ancestor
+							r = r.left;
+						} else {
+							if (r.loc.equals(current.getLocation())) found = true; // changed from HW #9
+							r = r.right;
+						}
+					}
+					if (!found) return report("didn't find current in tree.");
+					if (p == null) {
+						if (!clone.isEmpty()) return report("stack isn't empty, but hextile is last");
+					} else {
+						if (clone.isEmpty()) return report("stack is empty, but hextile is not last");
+						if (clone.peek() != p) return report("top of stack is not next node from current");
+					}
+				}
+				p = null;
+				while (!clone.isEmpty()) {
+					Node q = clone.pop();
+					if (q == null) return report("Found null on stack");
+					Node r = q.left;
+					while (r != p && r != null) {
+						r = r.right;
+					}
+					if (r != p) return report("Found bad node " + q + " on stack");
+					p = q;
+				}				
+				if (p != null) {
+					Node r = root;
+					while (r != p && r != null) {
+						r = r.right;
+					}
+					if (r != p) return report("Bottom node on stack not a right descendant of root: " + p);
 				}
 			}
-			// 4. If current isn't null, the next node after it should be top of the stack
-			if (current!=null && !pending.isEmpty()) {
-				Node top = findNode(root,current);
-				Node successor = findSuccessor(root,top);
-				if(successor !=pending.peek()) {
-					return report("the next node after it should be top of the stack");
-
-				}
-			}
-			// 5. If the stack isn't empty, then it should have all greater ancestors of top of stack and nothing else.
-
-			if (pending == null) {
-			    return report("stack is empty");
-			}
-
-			Stack<Node> clone = (Stack<Node>) pending.clone();
-			if (clone.isEmpty()) {
-			    return true;
-			}
-
-			Node top = clone.pop();
-
-			// Ensure the top node is part of the tree
-			if (!isInTree(root, top)) {
-			    return report("Node in stack is not in the tree");
-			}
-
-			Stack<Node> expected = new Stack<>();
-			Node current = root;
-
-			// Traverse the tree to find the expected ancestor nodes of the top node
-			while (current != null) {
-			    int comparison = compare(top.loc, current.loc);
-
-			    if (comparison < 0) {
-			        expected.push(current);
-			        current = current.left;
-			    } else if (comparison > 0) {
-			        current = current.right;
-			    } else {
-			        break;
-			    }
-			}
-
-			// Compare the nodes in the clone stack with the expected ancestor nodes
-			while (!clone.isEmpty() && !expected.isEmpty()) {
-			    Node actualNode = clone.pop();
-			    Node expectedNode = expected.pop();
-
-			    if (actualNode != expectedNode) {
-			        return report("Stack contains incorrect ancestor");
-			    }
-			}
-
-			// If there are extra or missing ancestors in the stack, report it
-			if (!clone.isEmpty() || !expected.isEmpty()) {
-			    return report("Stack has extra or missing ancestors");
-			}
-
 			return true;
 		}
 
-		private MyIterator(boolean ignored) {} // do not change, and do not use in your code
 
-		// TODO: any helper method(s) (see homework description)
-		private Node findNode(Node root, HexTile current) {
-			if(root ==null) return null;
-
-			int cmp = compare(current.getLocation(), root.loc);
-			if(cmp==0 && root.terrain.equals(current.getTerrain())) return root;
-			if(cmp<0) return findNode(root.left, current);
-			return findNode(root.right, current);
-		}
-
-		private Node findSuccessor(Node root, Node node) {
-			if(node.right!=null) {
-				Node target = node.right;
-				while(target.left !=null) {
-					target = target.left;
-				}
-				return target;
+		private void pushNodes(Node p) {
+			while (p != null) {
+				pending.push(p);
+				p = p.left;
 			}
-			Node succ =null;
-			while(root!=null) {
-				int cmp = compare(node.loc, root.loc);
-				if(cmp<0) {
-					succ = root;
-					root = root.left;
-				}else if(cmp>0) {
-					root = root.right;
-				}
-				else {
-					break;
-				}
-			}
-			return succ;
-		}
-		private boolean isInTree(Node root, Node target) {
-			if(root ==null) return false;
-			if(root.equals(target)) return true;
-			return isInTree(root.left, target) || isInTree(root.right, target);
 		}
 
-		private MyIterator() {
-			// TODO
-			assert wellFormed();
-			myVersion = HexBoard.this.version;
+		private void checkVersion() {
+			if (version != myVersion) throw new ConcurrentModificationException("stale");
+		}
+
+		public EntrySetIterator(boolean ignore) {}
+
+		// Default constructor - no row filtering
+
+
+		// Row-specific constructor
+		EntrySetIterator(int row) {
+			rowFilter = row;
+			// Find nodes that could contain entries in this row
 			Node n = root;
 			while (n != null) {
-				pending.push(n);
-				n = n.left;
-			}
-			assert wellFormed():"at the end of MyIterator";
-
-		}
-
-		@Override // required
-		public boolean hasNext() {
-			if (myVersion != version) {
-				throw new ConcurrentModificationException();
-			}
-			return !pending.isEmpty(); // TODO
-		}
-
-		@Override // required
-		public HexTile next() {
-			if (!hasNext()) throw new NoSuchElementException();
-
-			Node n = pending.pop(); // get the next node
-			current = new HexTile(n.terrain, n.loc); // convert node to HexTile
-
-			Node right = n.right;
-			while (right != null) {
-				pending.push(right);
-				right = right.left;
-			}
-			assert wellFormed();
-			return current; // TODO: find next entry and generate hex tile on demand
-		}
-
-		@Override // implementation
-		public void remove() {
-			//			throw new UnsupportedOperationException("no removal yet"); 
-			assert wellFormed():"at the beginning of remove";
-			if (myVersion != version) throw new ConcurrentModificationException();
-			if (current == null) throw new IllegalStateException();
-			HexBoard.this.remove(current);
-			version++;
-			myVersion = version;
-			HexCoordinate currentLocation = current.getLocation();
-			current=null;
-
-			pending.clear();
-			Node n = root;
-			while (n != null) {
-				int comp = compare(currentLocation, n.loc);
-				if (comp < 0) {
+				if (row <= n.loc.b()) {
 					pending.push(n);
 					n = n.left;
 				} else {
 					n = n.right;
-				} 
+				}
 			}
-
-			assert wellFormed() : "after remove()";
-			// TODO
+			this.myVersion = version;
+			assert wellFormed() : "invariant failed at end of EntrySetIterator(row)";
 		}
-	}
 
+
+		private EntrySetIterator() {
+			pushNodes(root);
+			assert wellFormed();
+		}
+
+		@Override // required by Java
+		public boolean hasNext() {
+			assert wellFormed() : "in hasNext";
+			checkVersion();
+			return !pending.isEmpty();
+		}
+
+		public boolean hasNext(int row) {
+			assert wellFormed() : "in hasNext(row)";
+			checkVersion();
+			while (!pending.isEmpty()) {
+				Node p = pending.peek();
+				if (p.loc.b() == row) return true;
+				if (p.loc.b() < row) {
+					pending.pop();
+					pushNodes(p.right);
+				} else {
+					return false;
+				}
+			}
+			return false;
+		}
+
+
+		@Override // required by Java
+		public Node next() {
+			assert wellFormed() : "in next";
+			if (!hasNext()) throw new NoSuchElementException("no more");
+			Node p = pending.pop();
+			pushNodes(p.right);
+			current = new HexTile(p.terrain,p.loc);
+			assert wellFormed() : "invariant broken at end of next()";
+			return p;
+		}
+
+		@Override // implementation
+		public void remove() {
+			assert wellFormed() : "invariant broken at start of remove()";
+			checkVersion();
+			if (current == null) throw new IllegalStateException("nothing to remove");
+			if(!HexBoard.this.remove(current)){
+				if(terrainAt(current.getLocation())==null) {
+					throw new RuntimeException("someting went wrong!");
+				}
+				//原本 remove(current) 失敗，是因為 current 裡的 terrain 是舊的，跟現在樹裡那塊 tile 的 terrain 已經不一樣了（reference 變了），所以 contains() 判斷失敗，導致 remove() 沒真的刪。
+				HexTile actual = new HexTile(terrainAt(current.getLocation()), current.getLocation());
+				//修正方法就是重新拿出「樹裡真實的 terrain」，重新構造 HexTile 再拿去刪，就不會錯了 
+				HexBoard.this.remove(actual);
+			}
+			myVersion = version;
+			current = null;
+			assert wellFormed() : "invariant broken at end of remove()";
+		}
+
+	}
 	/**
 	 * Used for testing the invariant.  Do not change this code.
 	 */
@@ -447,9 +650,11 @@ public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
 			public Node() {
 				this(null, null, null, null);
 			}
+
 			/**
 			 * Create a node with the given values
-			 * @param location and terrain data for new node, may be null
+			 * @param loc location of new node, may be null
+			 * @param terrain data for new node, may be null
 			 * @param l left for new node, may be null
 			 * @param r right for new node, may be null
 			 */
@@ -463,7 +668,8 @@ public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
 
 			/**
 			 * Change the data in the node.
-			 * @param s new string to use
+			 * @param loc location 
+			 * @param terrain terrain
 			 */
 			public void setTile(HexCoordinate loc,Terrain terrain) {
 				this.loc = loc;
@@ -517,7 +723,7 @@ public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
 		 * @param r root
 		 * @param m size, many nodes
 		 * @param v version
-		 * @return a new instance of a BallSeq with the given data structure
+		 * @return a new instance of a ADT with the given data structure
 		 */
 		public HexBoard newInstance(Node r, int m, int v) {
 			HexBoard result = new HexBoard();
@@ -536,8 +742,8 @@ public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
 		 * @return new testing instance
 		 */
 		@SuppressWarnings("unchecked")
-		public Iterator<HexTile> newIterator(HexBoard base, Stack<Node> p, HexTile c, int v) {
-			HexBoard.MyIterator result = base.new MyIterator(false);
+		public Iterator<Map.Entry<HexCoordinate,Terrain>> newIterator(HexBoard base, Stack<Node> p, HexTile c, int v) {
+			HexBoard.EntrySetIterator result = base.new EntrySetIterator(false);
 			result.pending = (Stack<HexBoard.Node>)(Stack<?>)p;
 			result.current = c;
 			result.myVersion = v;
@@ -547,11 +753,11 @@ public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
 		/**
 		 * Return whether debugging instance meets the 
 		 * requirements on the invariant.
-		 * @param lx instance of to use, must not be null
+		 * @param b instance of to use, must not be null
 		 * @return whether it passes the check
 		 */
-		public boolean wellFormed(HexBoard lx) {
-			return lx.wellFormed();
+		public boolean wellFormed(HexBoard b) {
+			return b.wellFormed();
 		}
 
 		/**
@@ -579,7 +785,8 @@ public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
 
 		/**
 		 * Compare two hex Coordinates
-		 * @param HexCoord H1 and HexCoord H2
+		 * @param h1 first to compare, must not be null
+		 * @param h2 second to compare, must not be null
 		 * @return Integer 0 if equal, neg if H1<H2 and pos if H1>H2
 		 */
 		public int compare(HexCoordinate h1, HexCoordinate h2) {
@@ -592,10 +799,11 @@ public class HexBoard extends AbstractCollection<HexTile> implements Cloneable {
 		 * @param it testing iterator, must not be null and must have been created by {@link #newIterator}
 		 * @return whether the data structure meets the requirements
 		 */
-		public boolean wellFormed(Iterator<HexTile> it) {
-			MyIterator myIt = (MyIterator)it;
+		public boolean wellFormed(Iterator<Map.Entry<HexCoordinate, Terrain>> it) {
+			EntrySetIterator myIt = (EntrySetIterator)it;
 			return myIt.wellFormed();
 		}
 
 	}
 }
+
