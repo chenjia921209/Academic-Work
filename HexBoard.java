@@ -1,628 +1,478 @@
 package edu.uwm.cs351;
 
-import java.util.AbstractMap;
-import java.util.AbstractSet;
+import java.util.AbstractCollection;
+import java.util.Comparator;
 import java.util.ConcurrentModificationException;
 import java.util.Iterator;
-import java.util.Map;
-import java.util.Map.Entry;
+import java.util.LinkedHashSet;
 import java.util.NoSuchElementException;
-import java.util.Set;
-import java.util.Stack;
 import java.util.function.Consumer;
 
-import edu.uwm.cs351.util.AbstractEntry;
+import edu.uwm.cs351.HexBoard.HexPiece;
+import edu.uwm.cs351.util.Primes;
 
-/**
- * An implementation of the HexBoard ADT using 
- * a binary search tree implementation.
- * A hex board is a collection of hex tiles except that there can 
- * never be two tiles at the same location. 
- */
-public class HexBoard extends AbstractSet<HexTile> implements Cloneable {
+public class HexBoard extends AbstractCollection<HexBoard.HexPiece> {
 
-	private static int compare(HexCoordinate h1, HexCoordinate h2) {
-		if (h1.b() == h2.b()) {
-			return h1.a() - h2.a();
-		}
-		return h1.b() - h2.b();
+	@Override
+	public Iterator<HexPiece> iterator() {
+		// TODO Auto-generated method stub
+		return new MyIterator();
 	}
 
-	private static class Node extends AbstractEntry<HexCoordinate, Terrain>
-	{
-		HexCoordinate loc;
-		Terrain terrain;
-		Node left, right;
-		Node(HexCoordinate l, Terrain t) { loc = l; terrain = t; }
-		@Override
-		public HexCoordinate getKey() {
-			return loc;
+	@Override
+	public int size() {
+		return size;
+	}
+
+	/**
+	 * A class of mutable hex tiles that have object identity,
+	 * and are linked with other pieces. 
+	 */
+	public static class HexPiece {
+		final HexCoordinate location;
+		Terrain terrain;		
+		HexPiece[] neighbors = new HexPiece[HexDirection.values().length];
+		HexPiece nextInChain; // new to Homework #11
+
+		/**
+		 * Create a piece with the given aspects.
+		 * @param t terrain, must not be null
+		 * @param h location, must not be null
+		 */
+		public HexPiece(Terrain t, HexCoordinate h) {
+			if (t == null || h == null) throw new NullPointerException("terrain or location cannot be null");
+			this.terrain = t;
+			this.location = h;
 		}
-		@Override
-		public Terrain getValue() {
+
+		/**
+		 * Return location of piece.
+		 * @return location
+		 */
+		public HexCoordinate getLocation() {
+			return location;
+		}
+
+		/**
+		 * Return current terrain (can change)
+		 * @return terrain
+		 */
+		public Terrain getTerrain() {
 			return terrain;
 		}
-		@Override
-		public Terrain setValue(Terrain value) {
-			if (value == null) {
-				throw new NullPointerException();
-			}
-			Terrain old = terrain;
-			terrain = value;
-			return old;
+
+		/**
+		 * Return an immutable tile for this piece.
+		 * @return an immutable hex tile
+		 */
+		public HexTile asTile() {
+			return new HexTile(terrain, location);
+		}
+
+		/**
+		 * Get the tile in the given direction on the board, if any
+		 * @param d direction to look, must not be null
+		 * @return piece in that direction, possibly null
+		 */
+		public HexPiece move(HexDirection d) {
+			return neighbors[d.ordinal()];
+		}
+
+		@Override // implementation
+		public String toString() {
+			return terrain + "" + location + super.toString();
 		}
 	}
 
-	private Node root;
+
+	private static final int INITIAL_CAPACITY = 7; // initial and minimum capacity
+
+	/// The data structure: three fields.  DO not add any more
+
+	private HexPiece[] table;
 	private int size;
 	private int version;
 
-	private static Consumer<String> reporter = (s) -> System.out.println("Invariant error: "+ s);
-	private static boolean report(String s) {
-		reporter.accept("Invariant error: " + s);
-		return false;
+
+	/** Return the location within the hash table
+	 * where the element is, or would be inserted (to add it)
+	 * @param t coordinate to look for, must not be null
+	 * @return location where piece with this coordinate is or would go
+	 */
+	private int locate(HexCoordinate t) { //helper method
+		// 取得 hashCode，並對 table.length 取模，避免負數
+		int h = t.hashCode();
+		int i = h % table.length;
+		if (i < 0) {
+			i = i + table.length; // 保證索引不為負數
+		}
+		return i;
 	}
 
 	/**
-	 * Return true if the nodes in this BST are properly
-	 * ordered with respect to the {@link #compare(HexCoordinate, HexCoordinate)}
-	 * method.  If a problem is found, it should be reported (once).
-	 * @param r subtree to check (may be null)
-	 * @param lo lower bound (if any)
-	 * @param hi upper bound (if any)
-	 * @return whether there are any problems in the tree.
+	 * Return the piece at the given hex coordinate, if any.
+	 * @param h hex coordinate
+	 * @return piece at that coordinate, or null if none
 	 */
-	private static boolean isInProperOrder(Node r, HexCoordinate lo, HexCoordinate hi) {
-		if (r == null) return true;
-		if (r.loc == null) return report("null location in tree");
-		if (r.terrain == null) return report("null terrain for " + r.loc);
-		if (lo != null && compare(lo,r.loc) >= 0) return report("out of order " + r.loc + " <= " + lo);
-		if (hi != null && compare(hi,r.loc) <= 0) return report("out of order " + r.loc + " >= " + hi);
-		return isInProperOrder(r.left,lo,r.loc) && isInProperOrder(r.right,r.loc,hi);
-	}
+	private HexPiece findPiece(HexCoordinate h) {
+		// TODO find a hex piece at the given coordinate.
 
-	/**
-	 * Return the count of the nodes in this subtree.
-	 * @param p subtree to count nodes for (may be null)
-	 * @return number of nodes in the subtree.
-	 */
-	private static int countNodes(Node p) {
-		if (p == null) return 0;
-		return 1 + countNodes(p.left) + countNodes(p.right);
-	}
+		for (HexPiece target : table) {
+			HexPiece p = target;
+			if (p == null) continue;
 
-	private boolean wellFormed() {
-		if (!isInProperOrder(root,null,null)) return false;
-		int count = countNodes(root);
-		if (size != count) return report("size " + size + " wrong, should be " + count);
-		return true;
-	}
-
-	/**
-	 * Create an empty hex board.
-	 */
-	public HexBoard() {
-		root = null;
-		size = 0;
-		assert wellFormed() : "in constructor";
-	}
-
-	/** Return the terrain at the given coordinate or null
-	 * if nothing at this coordinate.
-	 * @param c hex coordinate to look for (null OK but pointless)
-	 * @return terrain at that coordinate, or null if nothing
-	 */
-	public Terrain terrainAt(HexCoordinate c) {
-		assert wellFormed() : "in terrainAt";
-		if (c == null) return null;
-		for (Node p = root; p != null; ) {
-			int cmp = compare(c,p.loc);
-			if (cmp == 0) return p.terrain;
-			if (cmp < 0) p = p.left;
-			else p = p.right;
+			//記錄已經走訪過的 HexPiece，避免在「鏈結」中重複走訪 因為不是每條鏈都一定是循環的
+			java.util.HashSet<HexPiece> visited = new java.util.HashSet<>();
+			//table.length
+			while (p != null && visited.add(p)) {
+				if (p.location.equals(h)) return p;
+				p = p.nextInChain;
+			}
 		}
 		return null;
 	}
 
-	@Override // required by Java
-	public Iterator<HexTile> iterator() {
-		assert wellFormed() : "in iterator";
-		return new MyIterator();
-	}
-	@Override // required by Java
-	public int size() {
-		assert wellFormed() : "in size";	
-		return size;
-	}
+	private static Consumer<String> reporter = (s) -> System.out.println("Invariant error: "+ s);
 
-	@Override // efficiency
-	public boolean contains(Object o) {
-		assert wellFormed() : "in contains()";
-		if (o instanceof HexTile) {
-			HexTile h = (HexTile)o;
-			return terrainAt(h.getLocation()) == h.getTerrain();
-		}
+	private boolean report(String error) {
+		reporter.accept(error);
 		return false;
 	}
 
-	@Override // implementation
-	public boolean add(HexTile e) {
-		assert wellFormed() : "in add()";
-		Node lag = null;
-		Node p = root;
-		int c = 0;
-		while (p != null) {
-			c = compare(e.getLocation(),p.loc);
-			if (c == 0) break;
-			lag = p;
-			if (c < 0) p = p.left;
-			else p = p.right;
-		}
-		if (p != null) { // found it!
-			if (p.terrain == e.getTerrain()) return false;
-			p.terrain = e.getTerrain();
-			// size doesn't increase...
-		} else {
-			p = new Node(e.getLocation(),e.getTerrain());
-			++size;
-			if (lag == null) root = p;
-			else if (c < 0) lag.left = p;
-			else lag.right = p;
-		}
-		++version;
-		assert wellFormed() : "after add()";
-		return true;
-	}
+	private boolean wellFormed() {
+		/* Invariant: <ul>
+		 * <li>The table array is not null</li>
+		 * <li>The length of the array is a prime number and at least the initial; capacity</li>
+		 * <li>Every chain is cyclic  to the start (use modified T&H)</li>
+		 * <li>Every hex piece in a chain is in the correct chain.</li>
+		 * <li>The total number of pieces in the chains matches 'size'</li>
+		 * <li>The number of pieces is always less than the size of the table.</li>
+		 * <li> None of the pieces have null terrains></li>
+		 * <li> No two of the pieces have the same hex coordinate </li>
+		 * <li> For every piece: 
+		 *    a neighbor in a certain direction is in the table iff it is in the neighbor array for that direction.
+		 *    </li>
+		 */
+		// TODO (You may wish to copy some code from the solution to Homework #5)
+		if (table == null) return report("table is null");// 1. The table array is not null
+		// 2. The length of the array is a prime number and at least the initial capacity
+		if (table.length < INITIAL_CAPACITY || !Primes.isPrime(table.length)) return report("table length is is a prime number and at least the initial capacity");
+		// 3. Every chain is cyclic to the start (modified Tortoise and Hare)
+		int total = 0;
+		java.util.HashSet<HexCoordinate> seen = new java.util.HashSet<>();
 
-	@Override // efficiency
-	public void clear() {
-		assert wellFormed() : "invariant broken before clear()";
-		if (size > 0) {
-			root = null;
-			size = 0;
-			++version;
-		}
-		assert wellFormed() : "invariant broken by clear()";
-	}
+		for (int i = 0; i < table.length; ++i) {
+			HexPiece start = table[i];
+			if (start == null) continue;
 
-	private Node doRemove(Node r, HexTile ht) {
-		int c = compare(ht.getLocation(),r.loc);
-		if (c == 0) {
-			if (r.left == null) return r.right;
-			if (r.right == null) return r.left;
-			Node sub = r.left;
-			while (sub.right != null) {
-				sub = sub.right;
+			// Use Tortoise and Hare to detect cycle
+			HexPiece slow = start;
+			HexPiece fast = start.nextInChain;
+			while (fast != null && fast.nextInChain != null) {
+				if (slow == fast) break;
+				slow = slow.nextInChain;
+				fast = fast.nextInChain.nextInChain;
 			}
-			r.loc = sub.loc;
-			r.terrain = sub.terrain;
-			r.left = doRemove(r.left, new HexTile(r.terrain,r.loc));
-		} else if (c < 0) {
-			r.left = doRemove(r.left, ht);
-		} else {
-			r.right = doRemove(r.right, ht);
-		}
-		return r;
-	}
 
-	@Override // for efficiency and because the iterator uses this, for implementation
-	public boolean remove(Object x) {
-		assert wellFormed() : "invariant broken before remove()";
-		if (!(x instanceof HexTile)) return false;
-		HexTile ht = (HexTile)x;
-		if (!contains(ht)) return false;
-		root = doRemove(root,ht);
-		--size;
-		++version;
-		assert wellFormed() : "invariant broken after remove";
+			if (fast == null || fast.nextInChain == null) return report("Chain not cyclic");
+
+			// 4. Every hex piece is in the correct chain (i.e., it hashes to this slot) 
+			// 5. Count the number of pieces
+			for (HexPiece p = start;; p = p.nextInChain) {
+				if (p == null) return report("Unexpected null in chain");
+
+				if (p.terrain == null) return report("Null terrain in piece");
+
+				// Check coordinates unique
+				if (!seen.add(p.location)) return report("the coordinate is not the only " + p.location);
+
+				// Hash index check
+				int correctIndex = (p.location.hashCode()) % table.length;
+				if(correctIndex<0) {
+					correctIndex=table.length+correctIndex;	
+				}
+				if (correctIndex != i) return report("Piece with location " + p.location + " is in wrong chain");
+
+				// 9. Neighbor consistency
+				for(HexDirection direction: HexDirection.values()) { //copy from HW5
+					HexPiece neighbor = p.neighbors[direction.ordinal()];
+					HexCoordinate expected= direction.move(p.location);
+					HexPiece current = findPiece(expected);
+					if(current!=neighbor) {
+						return report("the tile is not the same as neighbor");
+					}
+					if(neighbor != null && p != neighbor.neighbors[direction.reverse().ordinal()]) {
+						return report("the neighbor is not point back to the current tail");
+					}
+
+				}
+				total++;
+				if (p.nextInChain == start) break;
+			}
+		}
+
+		// 6. size field should match the number of counted pieces
+		if (total != size) return report("size field does not match actual number of pieces: " + total + " vs " + size);
+
+		// 7. The number of pieces is less than the table length
+		if (size >= table.length) return report("Too many elements in table: size >= table.length");
+
 		return true;
 	}
 
-	private Node doClone(Node r) {
-		if (r == null) return null;
-		Node c = new Node(r.loc, r.terrain);
-		c.left = doClone(r.left);
-		c.right = doClone(r.right);
-		return c;
+
+	private HexBoard(boolean ignored) { } // do not change this constructor
+
+	public HexBoard() {
+		table = new HexPiece[INITIAL_CAPACITY];
+		size = 0;
+		version = 0;
+		assert wellFormed() : "invariant not estabished in constructor";
 	}
 
-	@Override // decorate
-	public HexBoard clone() {
-		assert wellFormed() : "invariant failed at start of clone";
-		HexBoard result;
-
-		try
-		{
-			result = (HexBoard) super.clone( );
+	private void connect(HexPiece p) {
+		HexCoordinate h = p.getLocation();
+		for (HexDirection d : HexDirection.values()) {
+			HexCoordinate h2 = d.move(h);
+			HexPiece p2 = findPiece(h2);
+			if (p2 != null) {
+				p.neighbors[d.ordinal()] = p2;
+				p2.neighbors[d.reverse().ordinal()] = p;
+			}
 		}
-		catch (CloneNotSupportedException e)
-		{  // This exception should not occur. But if it does, it would probably
-			// indicate a programming error that made super.clone unavailable.
-			// The most common error would be forgetting the "Implements Cloneable"
-			// clause at the start of this class.
-			throw new RuntimeException
-			("This class does not implement Cloneable");
-		}
-
-		result.root = doClone(root);
-		assert wellFormed() : "invariant failed at end of clone";
-		assert result.wellFormed() : "invariant failed for clone";
-
-		return result;
 	}
 
-	
-	
-	private class MyIterator implements Iterator<HexTile>{
-
-		private EntrySetIterator entryIt ;
-		private boolean hasRow;
-		private int row;
-
-		public MyIterator(int row) {
-			entryIt = new EntrySetIterator(row);
-			this.row = row;
-			this.hasRow=true;
+	private void disconnect(HexPiece p) {
+		for (HexDirection d : HexDirection.values()) {
+			HexPiece p2 = p.neighbors[d.ordinal()];
+			if (p2 != null) {
+				p2.neighbors[d.reverse().ordinal()] = null;
+				p.neighbors[d.ordinal()] = null;
+			}
 		}
+	}
+
+	// TODO: overrides (required/implementation/efficiency)
+	@Override
+	public boolean add(HexPiece e) {
+		assert wellFormed() : "at the beginning of add";
+
+		if (e.nextInChain != null) { //testL0,L1 不允許將已經加入過某個 HexBoard 的 HexPiece 再次加入到同一個或其他 HexBoard
+			throw new IllegalArgumentException("HexPiece is already part of a HexBoard");
+		}
+
+		// 檢查該位置是否已經有 HexPiece
+		HexPiece checkingPiece = findPiece(e.getLocation());
+		if (checkingPiece != null) {
+			// 如果已經存在，更新該 HexPiece 的 terrain
+			checkingPiece.terrain = e.getTerrain();
+			return false;  // 返回 false，表示沒有新增元素，只是更新了已存在的元素
+		}
+		// 如果該位置沒有已存在的 HexPiece，則像原來一樣插入新元素
+		int index = locate(e.getLocation());
+		HexPiece head = table[index];
+
+		if (head == null) {
+			// 第一個元素 -> 使其形成一個循環，指向自己
+			e.nextInChain = e;
+			table[index] = e;
+		} else {
+			// 插入到鏈表中，保持循環
+			e.nextInChain = head.nextInChain;
+			head.nextInChain = e;
+		}
+		size++;
+
+		if (size >= table.length) {
+			// 計算新的容量
+			int newCapacity = Primes.nextTwinPrime(table.length * 2);
+
+
+			// 創建新數組並將表格容量加倍
+			HexPiece[] newTable = new HexPiece[newCapacity];
+
+			table = rehash(newTable);
+		}
+		version++;
+		connect(e);  // 設置該 HexPiece 的 neighbors
+
+		assert wellFormed() : "at the end of add";
+		return true;
+	}
+
+
+	//helper method
+	private HexPiece[] rehash(HexPiece[] newTable) {
+		for (HexPiece head : table) {
+			if (head != null) {
+				HexPiece current = head;
+				do {
+					HexPiece next = current.nextInChain;  // 儲存下一個節點，避免搬家後指標混亂
+					// 重新計算 index
+					int correctIndex = current.location.hashCode() % newTable.length;
+					if (correctIndex < 0) correctIndex += newTable.length;
+
+					// 插入到新 table 的對應 bucket（維持循環鏈結結構）
+					if (newTable[correctIndex] == null) {
+						current.nextInChain = current;
+						newTable[correctIndex] = current;
+					} else {
+						current.nextInChain = newTable[correctIndex].nextInChain;
+						newTable[correctIndex].nextInChain = current;
+					}
+					current = next;
+				} while (current != head);
+			}
+		}
+		return newTable;
+	}
+
+	/**
+	 * Return the piece at this hex coordinate (if it exists)
+	 * @param h hex coordinate to look for, may be null
+	 * @return hex piece at this location, or null if no such piece
+	 */
+	public HexPiece get(HexCoordinate h) {
+		return findPiece(h);
+	}
+
+	private class MyIterator implements Iterator<HexPiece> {
+
+		private int count; 
+		private HexPiece current; 
+		private HexPiece start; // the beginning of the current chain
+		private int colVersion; 
+		private HexPiece lastReturned;
+		private int lastIndex = -1;
+		private boolean removeOK = false;
 
 		public MyIterator() {
-			entryIt = new EntrySetIterator();
-			this.hasRow = false;
+			colVersion = version;
+			count = -1;
+			advance(); // move to the first real piece
+		}
+		private void checkVersion() {
+			if (version != colVersion) throw new ConcurrentModificationException();
 		}
 
-		@Override
-		public boolean hasNext() {
-			if(!hasRow) {
-				return entryIt.hasNext();
-			}else {
-				return entryIt.hasNext(row);
+		private void advance() {
+			checkVersion();
+			if (current != null && current.nextInChain != start) {
+				current = current.nextInChain;
+				return;
 			}
-		}
-
-		@Override
-		public HexTile next() {
-			if(!hasNext()) {
-				throw new NoSuchElementException("No element in this row");
-			}
-			Entry<HexCoordinate, Terrain> entry = entryIt.next();
-			HexTile hexTile = new HexTile(entry.getValue(), entry.getKey());
-			return hexTile;
-		}
-
-		@Override
-		public void remove() {
-			entryIt.remove();
-		}
-
-	}
-	
-
-	/**
-	 * Return a set backed by this hex board that
-	 * has all the tiles in the given row.
-	 * The result is <i>backed</i> by this hex board;
-	 * changes to either are reflected in the other.
-	 * @param r row number.
-	 * @return set of hextiles with the given row
-	 */
-
-	public Set<HexTile> row(int r) {
-		assert wellFormed():"at the begin of row";
-		return new Row(r); // TODO
-	}
-
-	/**
-	 * Return a view of this hex board as a map from hex coordinates to terrain.
-	 * It is as efficient as the hex board itself.
-	 * @return
-	 */
-	public Map<HexCoordinate,Terrain> asMap() {
-		return new MyMap(); 
-	}
-
-
-
-	// TODO: add nested classes to implement map, entry set, and row.
-	private class Row extends AbstractSet<HexTile> {
-		private final int row;
-
-		private Row(int row) {
-			this.row = row;
-		}
-
-		@Override
-		public boolean add(HexTile h) {
-			assert wellFormed():"at the beginning of add";
-			// row 不對，不能加
-			if (h.getLocation().b() != row) throw new IllegalArgumentException("HexTile is not belong to row" + row);
-			if (h == null || h.getLocation().b() != row) throw new NullPointerException("h is null");
-			return HexBoard.this.add(h); // 加到整個 HexBoard 裡
-		}
-
-		@Override
-		public Iterator<HexTile> iterator() {
-			assert wellFormed():"at the beginning of iterator()";
-			return new MyIterator(row);
-		}
-
-		@Override
-		public int size() {
-			assert wellFormed():"at the beginning of size";
-			int count = 0;
-			Iterator<HexTile> it =iterator();
-			while(it.hasNext()) {
-				it.next();
+			// Move to next non-null bucket
+			current = null;
+			start = null;
+			count++;
+			while (count < table.length) {
+				if (table[count] != null) {
+					current = table[count];
+					start = current;
+					return;
+				}
 				count++;
 			}
-			assert wellFormed():"at the end of the size";
-			return count;
-		}
-
-		@Override //efficiency
-		public boolean contains(Object o) { //檢查一個物件 o 是否在某個集合裡面
-			if (!(o instanceof HexTile)) return false; 
-				HexTile h = (HexTile) o; //強制轉型為 HexTile
-				if(h.getLocation().b() == row) {
-				return HexBoard.this.contains(h);
-				}
-			return false;
-		}
-
-		@Override //efficiency
-		public boolean remove(Object o) {
-			if (o instanceof HexTile) {
-				HexTile h = (HexTile) o;
-				if (h.getLocation().b() == row) return HexBoard.this.remove(h);
-			}
-			return false;
-		}
-		
-		@Override
-		public boolean isEmpty() {
-			assert wellFormed() : "in isEmpty() of EntrySet";
-		    return !iterator().hasNext();
-		}
-	}
-
-
-	// The map and entry set classes must not have any fields!
-	// The row class may only have a "final" field (for the row number).
-	// Assuming you can use a separate constructor for MyIterator,
-	// this class can be used for row iterators too.
-
-	// 巢狀在 HexBoard 裡
-	private class EntrySet extends AbstractSet<Map.Entry<HexCoordinate, Terrain>> {
-
-		@Override 
-		public Iterator<Map.Entry<HexCoordinate, Terrain>> iterator() {
-			assert wellFormed():("in iterator() of EntrySet");
-			return new EntrySetIterator();
-		}
-
-		@Override 
-		public int size() {
-			assert wellFormed():("in size of EntrySet");
-			return HexBoard.this.size;
-		}
-		@Override //efficiency
-		public boolean contains(Object o) {
-			if(!(o instanceof Map.Entry)) return false;
-			Map.Entry<?,?> e = (Map.Entry<?,?>) o;
-			if(!(e.getKey() instanceof HexCoordinate) || !(e.getValue()
-					instanceof Terrain)) return false; //檢查 key 是不是 HexCoordinate，value 是不是 Terrain
-			HexCoordinate key = (HexCoordinate) e.getKey();
-			Terrain actual = terrainAt(key);
-			return actual != null && actual.equals(e.getValue()); //compare value
-		}
-		@Override //efficiency
-		public boolean remove(Object o) {
-			if(!(o instanceof Map.Entry)) return false;
-			Map.Entry<?,?> e = (Map.Entry<?,?>) o;
-			if(!(e.getKey() instanceof HexCoordinate) || !(e.getValue()
-					instanceof Terrain)) return false;
-			HexCoordinate key = (HexCoordinate) e.getKey();
-			Terrain t = (Terrain)e.getValue();
-			return HexBoard.this.remove(new HexTile(t, key));
-		}
-
-	}
-	private class MyMap extends AbstractMap<HexCoordinate, Terrain> {
-
-		@Override
-		public Set<Map.Entry<HexCoordinate, Terrain>> entrySet() {
-			return new EntrySet();
 		}
 
 		@Override
-		public Terrain put(HexCoordinate key, Terrain value) {
-			assert wellFormed() : "invariant brfore put()";
-			if (key == null || value == null) throw new NullPointerException();
-			Terrain addOne = get(key);
-			add(new HexTile(value, key));
-			assert wellFormed() : "invariant after put()";
-			return addOne;
-		}
-		@Override //efficiency
-		public Terrain get(Object key) {
-			assert wellFormed() : "at the beginning get() of MyMap";
-			if (!(key instanceof HexCoordinate)) return null;
-			return terrainAt((HexCoordinate) key);
-		}
-		@Override //efficiency
-		public boolean containsKey(Object key) {
-			assert wellFormed() : "at the beginning containsKey() of map";
-			if (!(key instanceof HexCoordinate)) return false;
-			return terrainAt((HexCoordinate) key) != null;
-		}
-		@Override //efficiency
-		public Terrain remove(Object key) {
-			assert wellFormed() : "at the beginning of MyMap";
-			if (!(key instanceof HexCoordinate)) return null;
-			HexCoordinate k = (HexCoordinate) key;
-			Terrain t = terrainAt(k);
-			if(t!= null)
-				HexBoard.this.remove(new HexTile(t, k));
-			return t;
-		}
-	}
-
-	private class EntrySetIterator implements Iterator<Entry<HexCoordinate,Terrain>> {
-		// Separate this into two classes:
-		// One an entry set iterator, and the other a wrapper
-
-		// around it that returns hex tiles up to a particular row number.
-		private Stack<Node> pending = new Stack<>();
-		private HexTile current; // if can be removed
-		private int myVersion = version;
-		private int rowFilter = 0; // -1 means no row filtering
-
-		private boolean wellFormed() {
-			if (!HexBoard.this.wellFormed()) return false;
-			if (version == myVersion) {
-				if (pending == null) return report("null pending");
-				@SuppressWarnings("unchecked")
-				Stack<Node> clone = (Stack<Node>) pending.clone();
-				Node p = null;
-				if (current != null) {
-					boolean found = false;
-					for (Node r=root; r != null; ) {
-						if (compare(current.getLocation(),r.loc) < 0) {
-							p = r; // remember GT ancestor
-							r = r.left;
-						} else {
-							if (r.loc.equals(current.getLocation())) found = true; // changed from HW #9
-							r = r.right;
-						}
-					}
-					if (!found) return report("didn't find current in tree.");
-					if (p == null) {
-						if (!clone.isEmpty()) return report("stack isn't empty, but hextile is last");
-					} else {
-						if (clone.isEmpty()) return report("stack is empty, but hextile is not last");
-						if (clone.peek() != p) return report("top of stack is not next node from current");
-					}
-				}
-				p = null;
-				while (!clone.isEmpty()) {
-					Node q = clone.pop();
-					if (q == null) return report("Found null on stack");
-					Node r = q.left;
-					while (r != p && r != null) {
-						r = r.right;
-					}
-					if (r != p) return report("Found bad node " + q + " on stack");
-					p = q;
-				}				
-				if (p != null) {
-					Node r = root;
-					while (r != p && r != null) {
-						r = r.right;
-					}
-					if (r != p) return report("Bottom node on stack not a right descendant of root: " + p);
-				}
-			}
-			return true;
-		}
-
-
-		private void pushNodes(Node p) {
-			while (p != null) {
-				pending.push(p);
-				p = p.left;
-			}
-		}
-
-		private void checkVersion() {
-			if (version != myVersion) throw new ConcurrentModificationException("stale");
-		}
-
-		public EntrySetIterator(boolean ignore) {}
-
-		// Default constructor - no row filtering
-
-
-		// Row-specific constructor
-		EntrySetIterator(int row) {
-			rowFilter = row;
-			// Find nodes that could contain entries in this row
-			Node n = root;
-			while (n != null) {
-				if (row <= n.loc.b()) {
-					pending.push(n);
-					n = n.left;
-				} else {
-					n = n.right;
-				}
-			}
-			this.myVersion = version;
-			assert wellFormed() : "invariant failed at end of EntrySetIterator(row)";
-		}
-
-
-		private EntrySetIterator() {
-			pushNodes(root);
-			assert wellFormed();
-		}
-
-		@Override // required by Java
 		public boolean hasNext() {
-			assert wellFormed() : "in hasNext";
 			checkVersion();
-			return !pending.isEmpty();
+			return current != null;
 		}
 
-		public boolean hasNext(int row) {
-			assert wellFormed() : "in hasNext(row)";
-			checkVersion();
-			while (!pending.isEmpty()) {
-				Node p = pending.peek();
-				if (p.loc.b() == row) return true;
-				if (p.loc.b() < row) {
-					pending.pop();
-					pushNodes(p.right);
-				} else {
-					return false;
+		@Override
+		public HexPiece next() {
+			if (!hasNext()) throw new NoSuchElementException();
+			lastReturned = current;
+			lastIndex = count;
+			removeOK = true;
+			advance();
+			if(lastReturned == current) {
+				advance();
+				if(lastReturned == current) {
+					current=null;
 				}
 			}
-			return false;
+			return lastReturned;
 		}
-
-
-		@Override // required by Java
-		public Node next() {
-			assert wellFormed() : "in next";
-			if (!hasNext()) throw new NoSuchElementException("no more");
-			Node p = pending.pop();
-			pushNodes(p.right);
-			current = new HexTile(p.terrain,p.loc);
-			assert wellFormed() : "invariant broken at end of next()";
-			return p;
-		}
-
-		@Override // implementation
+		@Override
 		public void remove() {
-			assert wellFormed() : "invariant broken at start of remove()";
 			checkVersion();
-			if (current == null) throw new IllegalStateException("nothing to remove");
-			if(!HexBoard.this.remove(current)){
-				if(terrainAt(current.getLocation())==null) {
-					throw new RuntimeException("someting went wrong!");
-				}
-				//原本 remove(current) 失敗，是因為 current 裡的 terrain 是舊的，跟現在樹裡那塊 tile 的 terrain 已經不一樣了（reference 變了），所以 contains() 判斷失敗，導致 remove() 沒真的刪。
-				HexTile actual = new HexTile(terrainAt(current.getLocation()), current.getLocation());
-				//修正方法就是重新拿出「樹裡真實的 terrain」，重新構造 HexTile 再拿去刪，就不會錯了 
-				HexBoard.this.remove(actual);
-			}
-			myVersion = version;
-			current = null;
-			assert wellFormed() : "invariant broken at end of remove()";
-		}
+			if (!removeOK) throw new IllegalStateException();
+			removeOK = false;
 
+			disconnect(lastReturned); // 斷開 neighbors
+
+			HexPiece head = table[lastIndex]; // 取得該元素所在 bucket 的頭節點
+
+			if (head == lastReturned && head.nextInChain == head) {
+				// 只有一個節點
+				head.nextInChain=null;
+				table[lastIndex] = null;
+			} else {
+				HexPiece prev = head;
+				while (prev.nextInChain != lastReturned) {
+					prev = prev.nextInChain;
+				}
+				prev.nextInChain = lastReturned.nextInChain;
+				if (head == lastReturned) {
+					table[lastIndex] = lastReturned.nextInChain; // 如果刪除的是頭節點，要更新 bucket 的頭
+					table[lastIndex].nextInChain = table[lastIndex].nextInChain.nextInChain;
+					lastReturned.nextInChain=null;
+				}
+			}
+			if (current == lastReturned) { // 如果 current 剛好是被刪除的節點，重設 current & start (test89)
+				current = null;
+				start = null;
+			}
+			lastReturned.nextInChain = null;
+			size--;
+			version++;
+			colVersion = version;
+			lastReturned = null;
+			
+		}
 	}
+	//TODO: For nested MyIterator class:
+	// You can choose your data structure.
+	// Our solution keeps "current" and "next"
+	// No need to write a data structure invariant for the iterator.
+
+
 	/**
 	 * Used for testing the invariant.  Do not change this code.
 	 */
 	public static class Spy {
+		public static class MyHexPiece extends HexPiece {
+			/**
+			 * Create a debugging hex piece with the given parts
+			 * @param t terrain, may be null
+			 * @param h location, may NOT be null
+			 */
+			public MyHexPiece(Terrain t, HexCoordinate h) {
+				super(Terrain.INACCESSIBLE, h);
+				terrain = t;
+			}
+
+			/**
+			 * Set the neighbor element
+			 * @param d direction, must not be null
+			 * @param p piece to use, may be null
+			 */
+			public void setNeighbor(HexDirection d, HexPiece p) {
+				this.neighbors[d.ordinal()] = p;
+			}
+
+			/**
+			 * Change the nextInChain field to the given value
+			 * @param p what should be next in chain, may be null
+			 */
+			public void setNext(HexPiece p) {
+				this.nextInChain = p;
+			}
+		}
+
 		/**
 		 * Return the sink for invariant error messages
 		 * @return current reporter
@@ -638,172 +488,31 @@ public class HexBoard extends AbstractSet<HexTile> implements Cloneable {
 		public void setReporter(Consumer<String> r) {
 			reporter = r;
 		}
-		/**
-		 * A public version of the data structure's internal node class.
-		 * This class is only used for testing.
-		 */
-		public static class Node extends HexBoard.Node {
-			// Even if Eclipse suggests it: do not add any fields to this class!
-			/**
-			 * Create a node with null data and null next fields.
-			 */
-			public Node() {
-				this(null, null, null, null);
-			}
-
-			/**
-			 * Create a node with the given values
-			 * @param loc location of new node, may be null
-			 * @param terrain data for new node, may be null
-			 * @param l left for new node, may be null
-			 * @param r right for new node, may be null
-			 */
-			public Node(HexCoordinate loc,Terrain terrain, Node l, Node r) {
-				super(null,null);
-				this.loc = loc;
-				this.terrain = terrain;
-				this.left = l;
-				this.right = r;
-			}
-
-			/**
-			 * Change the data in the node.
-			 * @param loc location 
-			 * @param terrain terrain
-			 */
-			public void setTile(HexCoordinate loc,Terrain terrain) {
-				this.loc = loc;
-				this.terrain = terrain;
-			}
-
-			/**
-			 * Return the terrain of the testing node
-			 * @return its terrain
-			 */
-			public Terrain getTerrain() {
-				return terrain;
-			}
-
-			/**
-			 * Get left child of testing node.
-			 * @return left child
-			 */
-			public Node getLeft() {
-				return (Node)left;
-			}
-
-			/**
-			 * Get right child of testing node.
-			 * @return right child
-			 */
-			public Node getRight() {
-				return (Node)right;
-			}
-
-			/**
-			 * Change a node by setting the "left" field.
-			 * @param n new left field, may be null.
-			 */
-			public void setLeft(Node n) {
-				this.left = n;
-			}
-
-			/**
-			 * Change a node by setting the "right" field.
-			 * @param n new right field, may be null.
-			 */
-			public void setRight(Node n) {
-				this.right = n;
-			}
-		}
 
 		/**
-		 * Create a debugging instance of the ADT
+		 * Create a debugging instance of the main class
 		 * with a particular data structure.
-		 * @param r root
-		 * @param m size, many nodes
-		 * @param v version
-		 * @return a new instance of a ADT with the given data structure
+		 * @param a array of hex pieces
+		 * @param s purported size
+		 * @return a new instance with the given data structure
 		 */
-		public HexBoard newInstance(Node r, int m, int v) {
-			HexBoard result = new HexBoard();
-			result.root = r;
-			result.size = m;
-			result.version = v;
-			return result;
-		}
-
-		/**
-		 * Create a testing iterator instance
-		 * @param base the hex board
-		 * @param p stack of pending nodes
-		 * @param c value of "current"
-		 * @param v value of "colVersion"
-		 * @return new testing instance
-		 */
-		@SuppressWarnings("unchecked")
-		public Iterator<Map.Entry<HexCoordinate,Terrain>> newIterator(HexBoard base, Stack<Node> p, HexTile c, int v) {
-			HexBoard.EntrySetIterator result = base.new EntrySetIterator(false);
-			result.pending = (Stack<HexBoard.Node>)(Stack<?>)p;
-			result.current = c;
-			result.myVersion = v;
+		public HexBoard newInstance(HexPiece[] a, int s) {
+			HexBoard result = new HexBoard(false);
+			result.table = a;
+			result.size = s;
+			result.version = s * 117 + 43;
 			return result;
 		}
 
 		/**
 		 * Return whether debugging instance meets the 
 		 * requirements on the invariant.
-		 * @param b instance of to use, must not be null
+		 * @param bs instance of to use, must not be null
 		 * @return whether it passes the check
 		 */
-		public boolean wellFormed(HexBoard b) {
-			return b.wellFormed();
+		public boolean wellFormed(HexBoard bs) {
+			return bs.wellFormed();
 		}
-
-		/**
-		 * Return the count of the nodes in this subtree.
-		 * @param p subtree to count nodes for (may be null)
-		 * @return number of nodes in the subtree.
-		 */
-		public int countNodes(Node p) {
-			return HexBoard.countNodes(p);	
-		}
-
-		/**
-		 * Return the result of the helper method isInProperOrder
-		 * @param n node to check for
-		 * @param lo lower bound
-		 * @param hi upper bound
-		 * @return result of running isInProperOrder on a debugging instance of HexCoordinate
-		 */
-		public boolean isInProperOrder(Node n, HexCoordinate lo, HexCoordinate hi) {
-			HexBoard lx = new HexBoard();
-			lx.root = null;
-			lx.size = -1;
-			return HexBoard.isInProperOrder(n,lo,hi);
-		}
-
-		/**
-		 * Compare two hex Coordinates
-		 * @param h1 first to compare, must not be null
-		 * @param h2 second to compare, must not be null
-		 * @return Integer 0 if equal, neg if H1<H2 and pos if H1>H2
-		 */
-		public int compare(HexCoordinate h1, HexCoordinate h2) {
-			return HexBoard.compare(h1, h2);
-		}
-
-		/**
-		 * Checking if a testing iterator has the correct form,
-		 * according to its "wellFormed" method.
-		 * @param it testing iterator, must not be null and must have been created by {@link #newIterator}
-		 * @return whether the data structure meets the requirements
-		 */
-		public boolean wellFormed(Iterator<Map.Entry<HexCoordinate, Terrain>> it) {
-			EntrySetIterator myIt = (EntrySetIterator)it;
-			return myIt.wellFormed();
-		}
-
 	}
-}
 
+}
